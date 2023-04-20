@@ -144,7 +144,6 @@ class BertPredictor(object):
         )
         input_mat = np.array(input_toks).reshape(1, -1)
         predictions = self.model.predict(input_mat, verbose=False)[0]
-        mask_index = input_toks.index(103)
         words_sorted = np.argsort(predictions[0, input_toks.index(103)])[::-1]
         candidates = get_candidates(context.lemma, context.pos)
         for word in self.tokenizer.convert_ids_to_tokens(words_sorted):
@@ -153,11 +152,91 @@ class BertPredictor(object):
         return None
 
 
+class MyPredictor(object):
+    def __init__(self):
+        self.tokenizer = transformers.DistilBertTokenizer.from_pretrained(
+            "distilbert-base-uncased"
+        )
+        self.model = transformers.TFDistilBertForMaskedLM.from_pretrained(
+            "distilbert-base-uncased"
+        )
+
+    def predict(self, context: Context, Word2VecSubstPredictor: Word2VecSubst) -> str:
+        """
+        My predictor combines the (normalized) Word2Vec similarity score and the Bert score and use that as the heuristic.
+        This provides a better result than the Word2Vec predictor alone, as shown in the results:
+        Total = 298, attempted = 298
+        precision = 0.130, recall = 0.130
+        Total with mode 206 attempted 206
+        precision = 0.189, recall = 0.189
+        """
+        input_toks = self.tokenizer.encode(
+            " ".join(context.left_context)
+            + " [MASK] "
+            + " ".join(context.right_context)
+        )
+        input_mat = np.array(input_toks).reshape(1, -1)
+        predictions = self.model.predict(input_mat, verbose=False)[0]
+        x = predictions[0, input_toks.index(103)]
+        predictions_norm = (x - np.min(x)) / (np.max(x) - np.min(x))
+        candidates = get_candidates(context.lemma, context.pos)
+        # Word2VecSubstPredictor = Word2VecSubst("GoogleNews-vectors-negative300.bin.gz")
+        # print("predictions_norm:", predictions_norm)
+        # print("x_idx:",
+        #       (self.tokenizer.convert_ids_to_tokens(np.arange(len(predictions_norm)))).index()
+        #       )
+        # for x in candidates:
+        # similarity = (
+        #     Word2VecSubstPredictor.model.similarity(x, context.lemma)
+        #     if x in Word2VecSubstPredictor.model.key_to_index
+        #     else 0
+        # )
+
+        # pred = (
+        #     predictions_norm[
+        #         self.tokenizer.convert_ids_to_tokens(
+        #             np.arange(len(predictions_norm))
+        #         ).index(x)
+        #     ]
+        #     if x
+        #     in self.tokenizer.convert_ids_to_tokens(
+        #         np.arange(len(predictions_norm))
+        #     )
+        #     else 0
+        # )
+
+        # print("candidate:", x)
+        # print("similarity:", similarity, "pred:", pred)
+
+        return max(
+            candidates,
+            key=lambda cand: (
+                (
+                    Word2VecSubstPredictor.model.similarity(cand, context.lemma)
+                    if cand in Word2VecSubstPredictor.model.key_to_index
+                    else 0
+                )
+                + (
+                    predictions_norm[
+                        self.tokenizer.convert_ids_to_tokens(
+                            np.arange(len(predictions_norm))
+                        ).index(cand)
+                    ]
+                    if cand
+                    in self.tokenizer.convert_ids_to_tokens(
+                        np.arange(len(predictions_norm))
+                    )
+                    else 0
+                )
+            ),
+        )
+
+
 if __name__ == "__main__":
     # At submission time, this program should run your best predictor (part 6).
 
-    # W2VMODEL_FILENAME = "GoogleNews-vectors-negative300.bin.gz"
-    # predictor = Word2VecSubst(W2VMODEL_FILENAME)
+    W2VMODEL_FILENAME = "GoogleNews-vectors-negative300.bin.gz"
+    predictor = Word2VecSubst(W2VMODEL_FILENAME)
 
     for context in read_lexsub_xml("lexsub_trial.xml"):
         # for context in read_lexsub_xml(sys.argv[1]):
@@ -166,7 +245,8 @@ if __name__ == "__main__":
         # prediction = wn_frequency_predictor(context)
         # prediction = wn_simple_lesk_predictor(context)
         # prediction = predictor.predict_nearest(context)
-        prediction = BertPredictor().predict(context)
+        # prediction = BertPredictor().predict(context)
+        prediction = MyPredictor().predict(context, predictor)
         print(
             "{}.{} {} :: {}".format(context.lemma, context.pos, context.cid, prediction)
         )
